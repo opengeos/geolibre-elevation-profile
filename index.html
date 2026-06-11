@@ -3,40 +3,113 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GeoLibre Elevation Profile - Demo</title>
-    <link
-      href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css"
-      rel="stylesheet"
-    />
+    <title>GeoLibre Elevation Profile</title>
     <style>
-      html,
-      body {
+      * {
+        box-sizing: border-box;
         margin: 0;
-        height: 100%;
+        padding: 0;
       }
-      #map {
-        position: absolute;
-        inset: 0;
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+          sans-serif;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 32px 20px;
+        color: #fff;
+        background: linear-gradient(135deg, #f97316 0%, #b45309 100%);
+      }
+      .card {
+        max-width: 640px;
+        text-align: center;
+      }
+      .icon {
+        width: 72px;
+        height: 72px;
+        margin: 0 auto 16px;
+        display: block;
+      }
+      h1 {
+        font-size: 2.4rem;
+        margin-bottom: 10px;
+      }
+      p.lead {
+        font-size: 1.1rem;
+        line-height: 1.5;
+        opacity: 0.95;
+        margin-bottom: 28px;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        justify-content: center;
+      }
+      a.btn {
+        display: inline-block;
+        padding: 12px 22px;
+        border-radius: 8px;
+        font-weight: 600;
+        text-decoration: none;
+        transition: transform 0.15s, box-shadow 0.15s;
+      }
+      a.btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25);
+      }
+      a.primary {
+        color: #b45309;
+        background: #fff;
+      }
+      a.secondary {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.15);
+        border: 1px solid rgba(255, 255, 255, 0.6);
+      }
+      .features {
+        margin-top: 28px;
+        font-size: 0.95rem;
+        opacity: 0.95;
+        line-height: 1.7;
       }
     </style>
   </head>
   <body>
-    <div id="map"></div>
-    <script type="module">
-      import maplibregl from 'maplibre-gl';
-      import { ElevationProfileControl } from './src/index.ts';
-
-      const map = new maplibregl.Map({
-        container: 'map',
-        style: 'https://tiles.openfreemap.org/styles/liberty',
-        center: [7.66, 45.98], // near the Matterhorn for dramatic terrain
-        zoom: 10,
-      });
-      map.addControl(new maplibregl.NavigationControl(), 'top-right');
-      map.addControl(
-        new ElevationProfileControl({ collapsed: false }),
-        'top-right',
-      );
-    </script>
+    <main class="card">
+      <svg
+        class="icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#fff"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M3 20h18L14 7l-3.5 6L8 9l-5 11z" />
+      </svg>
+      <h1>GeoLibre Elevation Profile</h1>
+      <p class="lead">
+        A GeoLibre / MapLibre plugin: draw a line on the map and instantly chart
+        the elevation profile along it, sampled from the free Open-Meteo API.
+      </p>
+      <div class="actions">
+        <a class="btn primary" href="examples/basic/">Open live demo</a>
+        <a
+          class="btn secondary"
+          href="https://github.com/opengeos/geolibre-elevation-profile"
+          >View on GitHub</a
+        >
+        <a class="btn secondary" href="https://plugins.geolibre.app"
+          >GeoLibre marketplace</a
+        >
+      </div>
+      <p class="features">
+        Distance &middot; ascent / descent &middot; min / max &middot;
+        metric &harr; imperial &middot; hover crosshair &middot; shareable URL
+      </p>
+    </main>
   </body>
 </html>
