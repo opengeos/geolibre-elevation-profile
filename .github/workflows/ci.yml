@@ -31,3 +31,6 @@ jobs:
 
       - name: Build (library + GeoLibre bundle)
         run: npm run build
+
+      - name: Build example site
+        run: npm run build:examples
