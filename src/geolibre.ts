@@ -1,6 +1,7 @@
 import { ElevationProfileControl } from './lib/core/ElevationProfileControl';
 import type { ElevationProfileState } from './lib/core/types';
 import type {
+  GeoLibreAppAPI,
   GeoLibreMapControlPosition,
   GeoLibrePlugin,
 } from './lib/geolibre/host-api';
@@ -10,13 +11,19 @@ import { ELEVATION_LINE_PARAM, maybeHandleDeepLink } from './lib/utils/deep-link
 import './lib/styles/elevation-profile.css';
 
 let control: ElevationProfileControl | null = null;
-let position: GeoLibreMapControlPosition = 'top-right';
+let position: GeoLibreMapControlPosition = 'top-left';
 let pendingState: Partial<ElevationProfileState> | null = null;
 
-function createControl(): ElevationProfileControl {
+function createControl(app: GeoLibreAppAPI<ElevationProfileControl>): ElevationProfileControl {
   const next = new ElevationProfileControl({
     collapsed: pendingState?.collapsed ?? true,
     unitSystem: pendingState?.unitSystem ?? 'metric',
+    // Bind the host's file save so CSV/SVG export works under Tauri's native
+    // dialog (and the browser); the control falls back to a download if absent.
+    exportTextFile: app.exportTextFile
+      ? (filename, content, options) =>
+          app.exportTextFile?.(filename, content, options)
+      : undefined,
   });
   if (pendingState) next.setState(pendingState);
   return next;
@@ -69,7 +76,7 @@ export const plugin: GeoLibrePlugin<ElevationProfileControl> = {
   urlParameterNames: [ELEVATION_LINE_PARAM],
 
   activate(app) {
-    control = control ?? createControl();
+    control = control ?? createControl(app);
     const added = app.addMapControl(control, position);
     if (!added) {
       control = null;

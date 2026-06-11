@@ -132,6 +132,28 @@ export interface GeoLibreAppAPI<TControl extends GeoLibreControl = GeoLibreContr
   ) => void;
   /** Remove a native layer previously registered with the given id. */
   unregisterExternalNativeLayer?: (id: string) => void;
+  /**
+   * Save text content to a file the user chooses. The host handles the platform
+   * specifics: a native save dialog under Tauri (GeoLibre Desktop) and a browser
+   * download on the web. Plugins should prefer this over building their own
+   * `<a download>` blob link, which Tauri's webview ignores. Call with optional
+   * chaining and fall back to a browser download when absent.
+   */
+  exportTextFile?: (
+    filename: string,
+    content: string,
+    options?: GeoLibreFileDialogOptions,
+  ) => void;
+}
+
+/** File-type hints for the host's save/open dialog and browser download. */
+export interface GeoLibreFileDialogOptions {
+  /** Human-readable file-type label, e.g. "CSV" or "SVG image". */
+  description?: string;
+  /** Allowed extensions without the leading dot, e.g. ["csv"]. */
+  extensions?: string[];
+  /** MIME type used for the browser download blob. */
+  mimeType?: string;
 }
 
 /**

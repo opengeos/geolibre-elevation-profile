@@ -53,7 +53,10 @@
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-.elevation-profile-toggle {
+/* Scoped under the container class so these win over GeoLibre's own
+   `.maplibregl-ctrl-group button` rules (which otherwise offset the icon). */
+.elevation-profile .elevation-profile-toggle {
+  box-sizing: border-box;
   width: 29px;
   height: 29px;
   display: flex;
@@ -62,22 +65,29 @@
   border: none;
   background: none;
   padding: 0;
+  margin: 0;
   cursor: pointer;
   color: var(--ep-text);
 }
 
-.elevation-profile-toggle:hover {
+.elevation-profile .elevation-profile-toggle:hover {
   background: var(--ep-hover-bg);
 }
 
-.elevation-profile-toggle svg {
+.elevation-profile .elevation-profile-toggle svg {
   display: block;
+  width: 20px;
+  height: 20px;
 }
 
-/* Floating panel */
+/* Floating panel. Resizable in every dock: it is always positioned by its
+   top-left corner (see _updatePanelPosition), so the bottom-right resize handle
+   grows it down and to the right consistently. */
 .elevation-profile-panel {
   position: absolute;
   display: none;
+  flex-direction: column;
+  box-sizing: border-box;
   background: var(--ep-bg);
   color: var(--ep-text);
   border-radius: 6px;
@@ -87,10 +97,27 @@
   font-size: 12px;
   line-height: 1.4;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  overflow: auto;
+  resize: both;
+  min-width: 260px;
+  min-height: 170px;
+  max-width: 90vw;
+  max-height: 85vh;
 }
 
 .elevation-profile-panel.expanded {
-  display: block;
+  display: flex;
+}
+
+/* Right-docked panels: render the resize grip in the bottom-left corner (so it
+   grows toward the map interior) by flipping the panel to RTL, then restore the
+   content's natural left-to-right flow on its children. */
+.elevation-profile-panel--anchor-right {
+  direction: rtl;
+}
+
+.elevation-profile-panel--anchor-right > * {
+  direction: ltr;
 }
 
 .elevation-profile-header {
@@ -211,18 +238,19 @@
   color: var(--ep-muted);
 }
 
-/* Chart */
+/* Chart. Flex-grows so a taller panel produces a taller chart. Its display is
+   toggled from JS (hidden when there is no profile) rather than via :empty, so
+   the host keeps a measurable width while the chart is being (re)drawn. */
 .elevation-profile-chart {
   margin-top: 10px;
-}
-
-.elevation-profile-chart:empty {
-  display: none;
+  flex: 1 1 auto;
+  min-height: 130px;
 }
 
 .elevation-profile-svg {
   display: block;
   width: 100%;
+  height: 100%;
   cursor: crosshair;
   background: var(--ep-surface);
   border-radius: 4px;
@@ -270,4 +298,22 @@
 
 .elevation-profile-readout:empty {
   visibility: hidden;
+}
+
+/* Export row (shown only when a profile exists; toggled to flex from JS) */
+.elevation-profile-export {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.elevation-profile-export-label {
+  font-size: 11px;
+  color: var(--ep-muted);
+}
+
+.elevation-profile-button-sm {
+  padding: 4px 10px;
+  font-size: 11px;
 }

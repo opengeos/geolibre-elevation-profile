@@ -16,6 +16,9 @@ MapLibre GL JS app.
 - **Inline chart** - a self-contained SVG area chart (no chart library) of
   elevation vs. distance, with a hover crosshair that drops a marker on the map.
 - **Stats** - total distance, min / max elevation, total ascent (up) and descent (down).
+- **Export** - save the samples as **CSV** or the chart as an **SVG** image. Uses
+  GeoLibre's host file save, so it works under both the Tauri desktop app (native
+  save dialog) and the web app.
 - **Metric / imperial** toggle for all readouts.
 - **Theme-aware** - follows GeoLibre's light/dark design tokens, with standalone
   fallbacks.

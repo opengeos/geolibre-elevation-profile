@@ -17,6 +17,7 @@ import {
   buildChartGeometry,
   type ProfilePoint,
 } from '../chart/profileChart';
+import { profileToCsv } from '../export/csv';
 import {
   formatDistance,
   formatElevation,
@@ -29,6 +30,8 @@ import type {
   ControlPosition,
   ElevationProfileControlOptions,
   ElevationProfileState,
+  ExportFileOptions,
+  ExportTextFile,
 } from './types';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -45,7 +48,9 @@ const HOVER_COLOR = '#ef4444';
 
 const CHART_HEIGHT = 132;
 
-const DEFAULT_OPTIONS: Required<ElevationProfileControlOptions> = {
+const DEFAULT_OPTIONS: Required<
+  Omit<ElevationProfileControlOptions, 'exportTextFile'>
+> = {
   collapsed: true,
   title: 'Elevation Profile',
   panelWidth: 320,
@@ -85,7 +90,8 @@ const pointCollection = (coords: LngLat[]): FeatureCollection<Point> => ({
  * persistence.
  */
 export class ElevationProfileControl implements IControl, DeepLinkConsumer {
-  private _options: Required<ElevationProfileControlOptions>;
+  private _options: Required<Omit<ElevationProfileControlOptions, 'exportTextFile'>>;
+  private _exportTextFile?: ExportTextFile;
   private _state: ElevationProfileState;
 
   private _map?: MapLibreMap;
@@ -99,6 +105,10 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
   private _clearButton?: HTMLButtonElement;
   private _unitButton?: HTMLButtonElement;
   private _readoutEl?: HTMLElement;
+  private _exportEl?: HTMLElement;
+  private _svgEl?: SVGSVGElement;
+  private _chartResizeObserver?: ResizeObserver;
+  private _chartRenderQueued = false;
 
   // Drawing / profiling runtime state (not serialized).
   private _drawing = false;
@@ -120,7 +130,9 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
    * @param options - Optional configuration overrides
    */
   constructor(options?: Partial<ElevationProfileControlOptions>) {
-    this._options = { ...DEFAULT_OPTIONS, ...options };
+    const { exportTextFile, ...visual } = options ?? {};
+    this._exportTextFile = exportTextFile;
+    this._options = { ...DEFAULT_OPTIONS, ...visual };
     this._options.maxSamples = Math.min(
       MAX_POINTS_PER_REQUEST,
       Math.max(2, Math.floor(this._options.maxSamples)),
@@ -160,6 +172,8 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
   onRemove(): void {
     this._exitDrawing();
     this._removeMapLayers();
+    this._chartResizeObserver?.disconnect();
+    this._chartResizeObserver = undefined;
 
     if (this._resizeHandler) {
       window.removeEventListener('resize', this._resizeHandler);
@@ -184,6 +198,8 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     this._statusEl = undefined;
     this._statsEl = undefined;
     this._chartEl = undefined;
+    this._exportEl = undefined;
+    this._svgEl = undefined;
   }
 
   // --- State -------------------------------------------------------------
@@ -536,7 +552,9 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     svg.setAttribute('stroke-linejoin', 'round');
     svg.setAttribute('aria-hidden', 'true');
     const path = document.createElementNS(SVG_NS, 'path');
-    path.setAttribute('d', 'M3 20h18L14 7l-3.5 6L8 9l-5 11z');
+    // Lucide "mountain": symmetric within the 24x24 viewBox so it sits centered
+    // in the toggle button.
+    path.setAttribute('d', 'm8 3 4 8 5-5 5 15H2L8 3z');
     svg.appendChild(path);
     return svg;
   }
@@ -599,7 +617,7 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     stats.className = 'elevation-profile-stats';
     this._statsEl = stats;
 
-    // Chart
+    // Chart (flex-grows so a taller panel yields a taller chart)
     const chart = document.createElement('div');
     chart.className = 'elevation-profile-chart';
     this._chartEl = chart;
@@ -609,7 +627,36 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     readout.className = 'elevation-profile-readout';
     this._readoutEl = readout;
 
-    panel.append(header, actions, status, stats, chart, readout);
+    // Export row (shown only when a profile exists)
+    const exportRow = document.createElement('div');
+    exportRow.className = 'elevation-profile-export';
+    const exportLabel = document.createElement('span');
+    exportLabel.className = 'elevation-profile-export-label';
+    exportLabel.textContent = 'Export:';
+    const csvButton = document.createElement('button');
+    csvButton.type = 'button';
+    csvButton.className = 'elevation-profile-button elevation-profile-button-sm';
+    csvButton.textContent = 'CSV';
+    csvButton.title = 'Download the profile as CSV';
+    csvButton.addEventListener('click', () => this._exportCsv());
+    const svgButton = document.createElement('button');
+    svgButton.type = 'button';
+    svgButton.className = 'elevation-profile-button elevation-profile-button-sm';
+    svgButton.textContent = 'SVG';
+    svgButton.title = 'Save the chart as an SVG image';
+    svgButton.addEventListener('click', () => this._exportSvg());
+    exportRow.append(exportLabel, csvButton, svgButton);
+    this._exportEl = exportRow;
+
+    panel.append(header, actions, status, stats, chart, readout, exportRow);
+
+    // Re-render the chart at the new pixel size whenever the panel is resized.
+    if (typeof ResizeObserver !== 'undefined') {
+      this._chartResizeObserver = new ResizeObserver(() =>
+        this._scheduleChartRender(),
+      );
+      this._chartResizeObserver.observe(chart);
+    }
 
     this._syncUnitButton();
     this._syncButtons();
@@ -622,6 +669,16 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
   private _renderProfile(): void {
     this._renderStats();
     this._renderChart();
+    this._syncExport();
+  }
+
+  private _scheduleChartRender(): void {
+    if (this._chartRenderQueued) return;
+    this._chartRenderQueued = true;
+    requestAnimationFrame(() => {
+      this._chartRenderQueued = false;
+      this._renderChart();
+    });
   }
 
   private _renderStats(): void {
@@ -657,13 +714,26 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
   private _renderChart(): void {
     const host = this._chartEl;
     if (!host) return;
-    host.textContent = '';
+    this._svgEl = undefined;
     if (this._readoutEl) this._readoutEl.textContent = '';
 
-    if (this._profilePoints.length < 2) return;
+    if (this._profilePoints.length < 2) {
+      host.textContent = '';
+      host.style.display = 'none'; // hide so it does not reserve empty space
+      return;
+    }
 
-    const width = Math.max(160, this._options.panelWidth - 24);
-    const height = CHART_HEIGHT;
+    // Show the host before measuring so it has a layout width (it is hidden
+    // when there is no profile). Size the chart to the host's current pixels so
+    // it follows panel resizing crisply rather than letting the SVG stretch and
+    // distort the axis text.
+    host.style.display = '';
+    host.textContent = '';
+    const fallbackWidth = this._panel
+      ? this._panel.clientWidth - 20
+      : this._options.panelWidth - 24;
+    const width = Math.max(160, Math.round(host.clientWidth) || fallbackWidth);
+    const height = Math.max(120, Math.round(host.clientHeight) || CHART_HEIGHT);
     const geometry = buildChartGeometry(this._profilePoints, width, height);
     const system = this._state.unitSystem;
 
@@ -671,8 +741,9 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     svg.setAttribute('class', 'elevation-profile-svg');
     svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
     svg.setAttribute('width', '100%');
-    svg.setAttribute('height', `${height}`);
+    svg.setAttribute('height', '100%');
     svg.setAttribute('preserveAspectRatio', 'none');
+    this._svgEl = svg;
 
     const area = document.createElementNS(SVG_NS, 'path');
     area.setAttribute('class', 'elevation-profile-area');
@@ -758,6 +829,114 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     this._setHoverPoint(null);
   }
 
+  // --- Export ------------------------------------------------------------
+
+  private _exportCsv(): void {
+    if (this._profilePoints.length < 2) return;
+    const csv = profileToCsv(this._profilePoints, this._sampledCoords);
+    this._saveFile('elevation-profile.csv', csv, {
+      description: 'CSV',
+      extensions: ['csv'],
+      mimeType: 'text/csv',
+    });
+  }
+
+  private _exportSvg(): void {
+    const svg = this._buildExportSvg();
+    if (!svg) return;
+    this._saveFile('elevation-profile.svg', svg, {
+      description: 'SVG image',
+      extensions: ['svg'],
+      mimeType: 'image/svg+xml',
+    });
+  }
+
+  /**
+   * Serialize the rendered chart into a standalone SVG string with the
+   * presentation styles inlined (external CSS does not travel with the file) and
+   * a solid background. Returns null when there is no chart to export.
+   */
+  private _buildExportSvg(): string | null {
+    const svg = this._svgEl;
+    if (!svg || this._profilePoints.length < 2) return null;
+    const viewBox = svg.getAttribute('viewBox')?.split(' ').map(Number);
+    if (!viewBox || viewBox.length < 4) return null;
+    const width = viewBox[2];
+    const height = viewBox[3];
+
+    const clone = svg.cloneNode(true) as SVGSVGElement;
+    clone.setAttribute('xmlns', SVG_NS);
+    clone.setAttribute('width', `${width}`);
+    clone.setAttribute('height', `${height}`);
+    clone.querySelector('.elevation-profile-hover')?.remove();
+
+    const inline = (selector: string, props: string[]): void => {
+      const live = svg.querySelectorAll(selector);
+      const cloned = clone.querySelectorAll(selector);
+      live.forEach((el, i) => {
+        const target = cloned[i] as SVGElement | undefined;
+        if (!target) return;
+        const cs = getComputedStyle(el);
+        for (const prop of props) {
+          target.style.setProperty(prop, cs.getPropertyValue(prop));
+        }
+      });
+    };
+    inline('.elevation-profile-area', ['fill', 'stroke']);
+    inline('.elevation-profile-line', ['fill', 'stroke', 'stroke-width']);
+    inline('.elevation-profile-axis', ['fill', 'font-size', 'font-family']);
+
+    const background = getComputedStyle(svg).backgroundColor;
+    const rect = document.createElementNS(SVG_NS, 'rect');
+    rect.setAttribute('width', `${width}`);
+    rect.setAttribute('height', `${height}`);
+    rect.setAttribute(
+      'fill',
+      background && background !== 'rgba(0, 0, 0, 0)' ? background : '#ffffff',
+    );
+    clone.insertBefore(rect, clone.firstChild);
+
+    return `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(clone)}`;
+  }
+
+  /**
+   * Save text content. Prefers the host's file save (a native dialog under Tauri,
+   * a browser download on the web); falls back to a browser download when the
+   * plugin runs standalone without a host.
+   */
+  private _saveFile(
+    filename: string,
+    content: string,
+    options: ExportFileOptions,
+  ): void {
+    if (this._exportTextFile) {
+      this._exportTextFile(filename, content, options);
+      return;
+    }
+    const blob = new Blob([content], {
+      type: options.mimeType ?? 'text/plain;charset=utf-8',
+    });
+    this._downloadBlob(blob, filename);
+  }
+
+  private _downloadBlob(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  private _syncExport(): void {
+    if (this._exportEl) {
+      this._exportEl.style.display =
+        this._stats && this._profilePoints.length >= 2 ? 'flex' : 'none';
+    }
+  }
+
   // --- UI sync helpers ---------------------------------------------------
 
   private _cycleUnits(): void {
@@ -830,6 +1009,13 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     return 'top-right';
   }
 
+  /**
+   * Anchor the panel to the same corner as the control button so the CSS resize
+   * grip lands on the inward corner. Right docks are anchored by their right edge
+   * and flagged `--anchor-right`, which flips the grip to the bottom-left (via
+   * `direction: rtl`) so dragging grows the panel toward the map interior rather
+   * than off the edge. Left docks keep the default bottom-right grip.
+   */
   private _updatePanelPosition(): void {
     if (!this._container || !this._panel || !this._mapContainer) return;
     const button = this._container.querySelector('.elevation-profile-toggle');
@@ -840,33 +1026,31 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     const position = this._getControlPosition();
     const gap = 5;
 
-    const top = buttonRect.top - mapRect.top;
-    const bottom = mapRect.bottom - buttonRect.bottom;
-    const left = buttonRect.left - mapRect.left;
-    const right = mapRect.right - buttonRect.right;
+    const isRight = position === 'top-right' || position === 'bottom-right';
+    const isBottom = position === 'bottom-left' || position === 'bottom-right';
 
     this._panel.style.top = '';
     this._panel.style.bottom = '';
     this._panel.style.left = '';
     this._panel.style.right = '';
 
-    switch (position) {
-      case 'top-left':
-        this._panel.style.top = `${top + buttonRect.height + gap}px`;
-        this._panel.style.left = `${left}px`;
-        break;
-      case 'top-right':
-        this._panel.style.top = `${top + buttonRect.height + gap}px`;
-        this._panel.style.right = `${right}px`;
-        break;
-      case 'bottom-left':
-        this._panel.style.bottom = `${bottom + buttonRect.height + gap}px`;
-        this._panel.style.left = `${left}px`;
-        break;
-      case 'bottom-right':
-        this._panel.style.bottom = `${bottom + buttonRect.height + gap}px`;
-        this._panel.style.right = `${right}px`;
-        break;
+    // Horizontal anchor on the button's matching edge.
+    if (isRight) {
+      this._panel.style.right = `${mapRect.right - buttonRect.right}px`;
+    } else {
+      this._panel.style.left = `${buttonRect.left - mapRect.left}px`;
     }
+
+    // Vertical: top docks open below the button, bottom docks open above it.
+    if (isBottom) {
+      this._panel.style.bottom = `${mapRect.bottom - buttonRect.top + gap}px`;
+    } else {
+      this._panel.style.top = `${buttonRect.bottom - mapRect.top + gap}px`;
+    }
+
+    this._panel.classList.toggle(
+      'elevation-profile-panel--anchor-right',
+      isRight,
+    );
   }
 }
