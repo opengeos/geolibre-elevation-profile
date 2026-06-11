@@ -30,6 +30,8 @@ import type {
   ControlPosition,
   ElevationProfileControlOptions,
   ElevationProfileState,
+  ExportFileOptions,
+  ExportTextFile,
 } from './types';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -46,7 +48,9 @@ const HOVER_COLOR = '#ef4444';
 
 const CHART_HEIGHT = 132;
 
-const DEFAULT_OPTIONS: Required<ElevationProfileControlOptions> = {
+const DEFAULT_OPTIONS: Required<
+  Omit<ElevationProfileControlOptions, 'exportTextFile'>
+> = {
   collapsed: true,
   title: 'Elevation Profile',
   panelWidth: 320,
@@ -86,7 +90,8 @@ const pointCollection = (coords: LngLat[]): FeatureCollection<Point> => ({
  * persistence.
  */
 export class ElevationProfileControl implements IControl, DeepLinkConsumer {
-  private _options: Required<ElevationProfileControlOptions>;
+  private _options: Required<Omit<ElevationProfileControlOptions, 'exportTextFile'>>;
+  private _exportTextFile?: ExportTextFile;
   private _state: ElevationProfileState;
 
   private _map?: MapLibreMap;
@@ -125,7 +130,9 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
    * @param options - Optional configuration overrides
    */
   constructor(options?: Partial<ElevationProfileControlOptions>) {
-    this._options = { ...DEFAULT_OPTIONS, ...options };
+    const { exportTextFile, ...visual } = options ?? {};
+    this._exportTextFile = exportTextFile;
+    this._options = { ...DEFAULT_OPTIONS, ...visual };
     this._options.maxSamples = Math.min(
       MAX_POINTS_PER_REQUEST,
       Math.max(2, Math.floor(this._options.maxSamples)),
@@ -632,13 +639,13 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     csvButton.textContent = 'CSV';
     csvButton.title = 'Download the profile as CSV';
     csvButton.addEventListener('click', () => this._exportCsv());
-    const pngButton = document.createElement('button');
-    pngButton.type = 'button';
-    pngButton.className = 'elevation-profile-button elevation-profile-button-sm';
-    pngButton.textContent = 'PNG';
-    pngButton.title = 'Download the chart as a PNG image';
-    pngButton.addEventListener('click', () => this._exportPng());
-    exportRow.append(exportLabel, csvButton, pngButton);
+    const svgButton = document.createElement('button');
+    svgButton.type = 'button';
+    svgButton.className = 'elevation-profile-button elevation-profile-button-sm';
+    svgButton.textContent = 'SVG';
+    svgButton.title = 'Save the chart as an SVG image';
+    svgButton.addEventListener('click', () => this._exportSvg());
+    exportRow.append(exportLabel, csvButton, svgButton);
     this._exportEl = exportRow;
 
     panel.append(header, actions, status, stats, chart, readout, exportRow);
@@ -827,22 +834,36 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
   private _exportCsv(): void {
     if (this._profilePoints.length < 2) return;
     const csv = profileToCsv(this._profilePoints, this._sampledCoords);
-    this._downloadBlob(
-      new Blob([csv], { type: 'text/csv;charset=utf-8' }),
-      'elevation-profile.csv',
-    );
+    this._saveFile('elevation-profile.csv', csv, {
+      description: 'CSV',
+      extensions: ['csv'],
+      mimeType: 'text/csv',
+    });
   }
 
-  private _exportPng(): void {
+  private _exportSvg(): void {
+    const svg = this._buildExportSvg();
+    if (!svg) return;
+    this._saveFile('elevation-profile.svg', svg, {
+      description: 'SVG image',
+      extensions: ['svg'],
+      mimeType: 'image/svg+xml',
+    });
+  }
+
+  /**
+   * Serialize the rendered chart into a standalone SVG string with the
+   * presentation styles inlined (external CSS does not travel with the file) and
+   * a solid background. Returns null when there is no chart to export.
+   */
+  private _buildExportSvg(): string | null {
     const svg = this._svgEl;
-    if (!svg || this._profilePoints.length < 2) return;
+    if (!svg || this._profilePoints.length < 2) return null;
     const viewBox = svg.getAttribute('viewBox')?.split(' ').map(Number);
-    if (!viewBox || viewBox.length < 4) return;
+    if (!viewBox || viewBox.length < 4) return null;
     const width = viewBox[2];
     const height = viewBox[3];
 
-    // External CSS does not apply once the SVG is rasterized, so clone it and
-    // inline the presentation styles plus a solid background.
     const clone = svg.cloneNode(true) as SVGSVGElement;
     clone.setAttribute('xmlns', SVG_NS);
     clone.setAttribute('width', `${width}`);
@@ -875,55 +896,27 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     );
     clone.insertBefore(rect, clone.firstChild);
 
-    const svgText = new XMLSerializer().serializeToString(clone);
-    const url = URL.createObjectURL(
-      new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' }),
-    );
-    const image = new Image();
-    image.onload = (): void => {
-      try {
-        const scale = 2;
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(width * scale);
-        canvas.height = Math.round(height * scale);
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          this._setStatus('Could not export the chart as PNG.');
-          return;
-        }
-        ctx.scale(scale, scale);
-        ctx.drawImage(image, 0, 0, width, height);
-        canvas.toBlob((blob) => {
-          if (blob) {
-            this._downloadBlob(blob, 'elevation-profile.png');
-          } else {
-            // Fallback for browsers where toBlob yields null.
-            this._downloadDataUrl(
-              canvas.toDataURL('image/png'),
-              'elevation-profile.png',
-            );
-          }
-        }, 'image/png');
-      } catch {
-        this._setStatus('Could not export the chart as PNG.');
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-    };
-    image.onerror = (): void => {
-      URL.revokeObjectURL(url);
-      this._setStatus('Could not export the chart as PNG.');
-    };
-    image.src = url;
+    return `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(clone)}`;
   }
 
-  private _downloadDataUrl(dataUrl: string, filename: string): void {
-    const anchor = document.createElement('a');
-    anchor.href = dataUrl;
-    anchor.download = filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
+  /**
+   * Save text content. Prefers the host's file save (a native dialog under Tauri,
+   * a browser download on the web); falls back to a browser download when the
+   * plugin runs standalone without a host.
+   */
+  private _saveFile(
+    filename: string,
+    content: string,
+    options: ExportFileOptions,
+  ): void {
+    if (this._exportTextFile) {
+      this._exportTextFile(filename, content, options);
+      return;
+    }
+    const blob = new Blob([content], {
+      type: options.mimeType ?? 'text/plain;charset=utf-8',
+    });
+    this._downloadBlob(blob, filename);
   }
 
   private _downloadBlob(blob: Blob, filename: string): void {

@@ -1,7 +1,7 @@
 {
   "name": "geolibre-elevation-profile",
   "version": "0.1.0",
-  "description": "GeoLibre plugin that draws a line on the map and charts the elevation profile along it (distance, ascent/descent, min/max), with CSV/PNG export, sampling elevations from the Open-Meteo API.",
+  "description": "GeoLibre plugin that draws a line on the map and charts the elevation profile along it (distance, ascent/descent, min/max), with CSV/SVG export, sampling elevations from the Open-Meteo API.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",

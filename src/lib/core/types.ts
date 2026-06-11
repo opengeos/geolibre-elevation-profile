@@ -8,6 +8,27 @@ export type ControlPosition =
   | 'bottom-left'
   | 'bottom-right';
 
+/** File-type hints for a host save dialog / browser download. */
+export interface ExportFileOptions {
+  /** Human-readable file-type label, e.g. "CSV". */
+  description?: string;
+  /** Allowed extensions without the leading dot, e.g. ["csv"]. */
+  extensions?: string[];
+  /** MIME type used for the browser download blob. */
+  mimeType?: string;
+}
+
+/**
+ * Host text-file save callback. GeoLibre's `exportTextFile` implements this and
+ * picks the right mechanism per runtime (a native save dialog under Tauri, a
+ * browser download on the web).
+ */
+export type ExportTextFile = (
+  filename: string,
+  content: string,
+  options?: ExportFileOptions,
+) => void;
+
 /** Options for configuring the {@link ElevationProfileControl}. */
 export interface ElevationProfileControlOptions {
   /** Start collapsed (toggle button only). @default true */
@@ -25,6 +46,12 @@ export interface ElevationProfileControlOptions {
    * provider limit (100) internally. @default 100
    */
   maxSamples?: number;
+  /**
+   * Host text-file save (e.g. GeoLibre's `exportTextFile`). Used for the CSV and
+   * SVG exports so they work under Tauri's native save dialog as well as in the
+   * browser. Falls back to a browser download when not provided.
+   */
+  exportTextFile?: ExportTextFile;
 }
 
 /** Serializable state persisted with a GeoLibre project. */
