@@ -10,7 +10,7 @@ import { ELEVATION_LINE_PARAM, maybeHandleDeepLink } from './lib/utils/deep-link
 import './lib/styles/elevation-profile.css';
 
 let control: ElevationProfileControl | null = null;
-let position: GeoLibreMapControlPosition = 'top-right';
+let position: GeoLibreMapControlPosition = 'top-left';
 let pendingState: Partial<ElevationProfileState> | null = null;
 
 function createControl(): ElevationProfileControl {
