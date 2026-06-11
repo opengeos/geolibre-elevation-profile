@@ -707,18 +707,26 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
   private _renderChart(): void {
     const host = this._chartEl;
     if (!host) return;
-    host.textContent = '';
     this._svgEl = undefined;
     if (this._readoutEl) this._readoutEl.textContent = '';
 
-    if (this._profilePoints.length < 2) return;
+    if (this._profilePoints.length < 2) {
+      host.textContent = '';
+      host.style.display = 'none'; // hide so it does not reserve empty space
+      return;
+    }
 
-    // Size the chart to the host's current pixels so it follows panel resizing
-    // crisply (re-render rather than letting the SVG stretch and distort text).
-    const hostWidth = Math.round(host.clientWidth);
-    if (hostWidth <= 0) return; // collapsed/hidden; the ResizeObserver re-renders on expand
-    const width = hostWidth;
-    const height = Math.max(80, Math.round(host.clientHeight) || CHART_HEIGHT);
+    // Show the host before measuring so it has a layout width (it is hidden
+    // when there is no profile). Size the chart to the host's current pixels so
+    // it follows panel resizing crisply rather than letting the SVG stretch and
+    // distort the axis text.
+    host.style.display = '';
+    host.textContent = '';
+    const fallbackWidth = this._panel
+      ? this._panel.clientWidth - 20
+      : this._options.panelWidth - 24;
+    const width = Math.max(160, Math.round(host.clientWidth) || fallbackWidth);
+    const height = Math.max(120, Math.round(host.clientHeight) || CHART_HEIGHT);
     const geometry = buildChartGeometry(this._profilePoints, width, height);
     const system = this._state.unitSystem;
 
@@ -873,27 +881,49 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     );
     const image = new Image();
     image.onload = (): void => {
-      const scale = 2;
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(width * scale);
-      canvas.height = Math.round(height * scale);
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
+      try {
+        const scale = 2;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(width * scale);
+        canvas.height = Math.round(height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          this._setStatus('Could not export the chart as PNG.');
+          return;
+        }
+        ctx.scale(scale, scale);
+        ctx.drawImage(image, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          if (blob) {
+            this._downloadBlob(blob, 'elevation-profile.png');
+          } else {
+            // Fallback for browsers where toBlob yields null.
+            this._downloadDataUrl(
+              canvas.toDataURL('image/png'),
+              'elevation-profile.png',
+            );
+          }
+        }, 'image/png');
+      } catch {
+        this._setStatus('Could not export the chart as PNG.');
+      } finally {
         URL.revokeObjectURL(url);
-        return;
       }
-      ctx.scale(scale, scale);
-      ctx.drawImage(image, 0, 0, width, height);
-      URL.revokeObjectURL(url);
-      canvas.toBlob((blob) => {
-        if (blob) this._downloadBlob(blob, 'elevation-profile.png');
-      }, 'image/png');
     };
     image.onerror = (): void => {
       URL.revokeObjectURL(url);
       this._setStatus('Could not export the chart as PNG.');
     };
     image.src = url;
+  }
+
+  private _downloadDataUrl(dataUrl: string, filename: string): void {
+    const anchor = document.createElement('a');
+    anchor.href = dataUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
   }
 
   private _downloadBlob(blob: Blob, filename: string): void {

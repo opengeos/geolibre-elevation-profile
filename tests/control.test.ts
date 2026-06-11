@@ -91,6 +91,39 @@ describe('ElevationProfileControl', () => {
     expect(container.querySelector('.elevation-profile-panel')).toBeNull();
   });
 
+  it('renders the chart SVG and reveals export buttons after profiling a line', async () => {
+    const { map, container } = createFakeMap();
+    const control = new ElevationProfileControl({ collapsed: false });
+    control.onAdd(map);
+
+    const elevations = Array.from({ length: 100 }, (_, i) => 100 + i);
+    const fetchMock = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({ elevation: elevations }),
+        }) as Response,
+    );
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as typeof fetch;
+    try {
+      await control.loadLine([
+        [0, 0],
+        [0, 1],
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    // The chart must actually render (regression: it was hidden by :empty).
+    expect(container.querySelector('.elevation-profile-svg')).not.toBeNull();
+    const exportRow = container.querySelector<HTMLElement>(
+      '.elevation-profile-export',
+    )!;
+    expect(exportRow.style.display).toBe('flex');
+  });
+
   it('honors initial options', () => {
     const { map, container } = createFakeMap();
     const control = new ElevationProfileControl({
