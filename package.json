@@ -1,0 +1,84 @@
+{
+  "name": "geolibre-elevation-profile",
+  "version": "0.1.0",
+  "description": "GeoLibre plugin that draws a line on the map and charts the elevation profile along it, sampling elevations from the Open-Meteo API.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/types/index.d.ts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/types/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./style.css": "./dist/geolibre-elevation-profile.css"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": [
+    "*.css"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run build:lib && npm run build:geolibre",
+    "build:lib": "tsc -p tsconfig.json && vite build",
+    "build:geolibre": "vite build --config vite.geolibre.config.ts",
+    "package:geolibre": "npm run build:geolibre && node scripts/package-geolibre-plugin.mjs",
+    "install:geolibre": "npm run build:geolibre && node scripts/install-geolibre-plugin.mjs",
+    "serve:geolibre": "node scripts/serve-geolibre-plugin.mjs",
+    "preview": "vite preview",
+    "test": "vitest --run",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
+    "format": "prettier --write \"src/**/*.{ts,css}\"",
+    "prepublishOnly": "npm run build:lib"
+  },
+  "keywords": [
+    "geolibre",
+    "maplibre",
+    "maplibre-gl",
+    "map",
+    "plugin",
+    "elevation",
+    "elevation-profile",
+    "terrain",
+    "topography",
+    "open-meteo",
+    "typescript"
+  ],
+  "author": "Qiusheng Wu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opengeos/geolibre-elevation-profile.git"
+  },
+  "peerDependencies": {
+    "maplibre-gl": ">=3.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@microsoft/api-extractor": "^7.58.7",
+    "@types/node": "^25.9.2",
+    "@vitest/ui": "^4.1.8",
+    "eslint": "^10.4.1",
+    "globals": "^17.6.0",
+    "jsdom": "^29.1.1",
+    "maplibre-gl": "^5.24.0",
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.60.1",
+    "vite": "^8.0.16",
+    "vite-plugin-dts": "^5.0.2",
+    "vitest": "^4.1.8"
+  }
+}

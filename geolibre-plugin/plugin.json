@@ -1,0 +1,8 @@
+{
+  "id": "geolibre-elevation-profile",
+  "name": "Elevation Profile",
+  "version": "0.1.0",
+  "entry": "dist/index.js",
+  "description": "Draw a line on the map and view an elevation profile sampled along it.",
+  "style": "dist/style.css"
+}
