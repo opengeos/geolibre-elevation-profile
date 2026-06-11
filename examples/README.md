@@ -27,4 +27,5 @@ npm run build:examples
 ```
 
 The static site is written to `dist-examples/`. The same build is published to
-GitHub Pages on every push to `main` (see `.github/workflows/deploy-pages.yml`).
+GitHub Pages at <https://opengeos.github.io/geolibre-elevation-profile/> on every
+push to `main` (see `.github/workflows/deploy-pages.yml`).
