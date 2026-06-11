@@ -17,6 +17,7 @@ import {
   buildChartGeometry,
   type ProfilePoint,
 } from '../chart/profileChart';
+import { profileToCsv } from '../export/csv';
 import {
   formatDistance,
   formatElevation,
@@ -99,6 +100,10 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
   private _clearButton?: HTMLButtonElement;
   private _unitButton?: HTMLButtonElement;
   private _readoutEl?: HTMLElement;
+  private _exportEl?: HTMLElement;
+  private _svgEl?: SVGSVGElement;
+  private _chartResizeObserver?: ResizeObserver;
+  private _chartRenderQueued = false;
 
   // Drawing / profiling runtime state (not serialized).
   private _drawing = false;
@@ -160,6 +165,8 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
   onRemove(): void {
     this._exitDrawing();
     this._removeMapLayers();
+    this._chartResizeObserver?.disconnect();
+    this._chartResizeObserver = undefined;
 
     if (this._resizeHandler) {
       window.removeEventListener('resize', this._resizeHandler);
@@ -184,6 +191,8 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     this._statusEl = undefined;
     this._statsEl = undefined;
     this._chartEl = undefined;
+    this._exportEl = undefined;
+    this._svgEl = undefined;
   }
 
   // --- State -------------------------------------------------------------
@@ -536,7 +545,9 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     svg.setAttribute('stroke-linejoin', 'round');
     svg.setAttribute('aria-hidden', 'true');
     const path = document.createElementNS(SVG_NS, 'path');
-    path.setAttribute('d', 'M3 20h18L14 7l-3.5 6L8 9l-5 11z');
+    // Lucide "mountain": symmetric within the 24x24 viewBox so it sits centered
+    // in the toggle button.
+    path.setAttribute('d', 'm8 3 4 8 5-5 5 15H2L8 3z');
     svg.appendChild(path);
     return svg;
   }
@@ -599,7 +610,7 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     stats.className = 'elevation-profile-stats';
     this._statsEl = stats;
 
-    // Chart
+    // Chart (flex-grows so a taller panel yields a taller chart)
     const chart = document.createElement('div');
     chart.className = 'elevation-profile-chart';
     this._chartEl = chart;
@@ -609,7 +620,36 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     readout.className = 'elevation-profile-readout';
     this._readoutEl = readout;
 
-    panel.append(header, actions, status, stats, chart, readout);
+    // Export row (shown only when a profile exists)
+    const exportRow = document.createElement('div');
+    exportRow.className = 'elevation-profile-export';
+    const exportLabel = document.createElement('span');
+    exportLabel.className = 'elevation-profile-export-label';
+    exportLabel.textContent = 'Export:';
+    const csvButton = document.createElement('button');
+    csvButton.type = 'button';
+    csvButton.className = 'elevation-profile-button elevation-profile-button-sm';
+    csvButton.textContent = 'CSV';
+    csvButton.title = 'Download the profile as CSV';
+    csvButton.addEventListener('click', () => this._exportCsv());
+    const pngButton = document.createElement('button');
+    pngButton.type = 'button';
+    pngButton.className = 'elevation-profile-button elevation-profile-button-sm';
+    pngButton.textContent = 'PNG';
+    pngButton.title = 'Download the chart as a PNG image';
+    pngButton.addEventListener('click', () => this._exportPng());
+    exportRow.append(exportLabel, csvButton, pngButton);
+    this._exportEl = exportRow;
+
+    panel.append(header, actions, status, stats, chart, readout, exportRow);
+
+    // Re-render the chart at the new pixel size whenever the panel is resized.
+    if (typeof ResizeObserver !== 'undefined') {
+      this._chartResizeObserver = new ResizeObserver(() =>
+        this._scheduleChartRender(),
+      );
+      this._chartResizeObserver.observe(chart);
+    }
 
     this._syncUnitButton();
     this._syncButtons();
@@ -622,6 +662,16 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
   private _renderProfile(): void {
     this._renderStats();
     this._renderChart();
+    this._syncExport();
+  }
+
+  private _scheduleChartRender(): void {
+    if (this._chartRenderQueued) return;
+    this._chartRenderQueued = true;
+    requestAnimationFrame(() => {
+      this._chartRenderQueued = false;
+      this._renderChart();
+    });
   }
 
   private _renderStats(): void {
@@ -658,12 +708,17 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     const host = this._chartEl;
     if (!host) return;
     host.textContent = '';
+    this._svgEl = undefined;
     if (this._readoutEl) this._readoutEl.textContent = '';
 
     if (this._profilePoints.length < 2) return;
 
-    const width = Math.max(160, this._options.panelWidth - 24);
-    const height = CHART_HEIGHT;
+    // Size the chart to the host's current pixels so it follows panel resizing
+    // crisply (re-render rather than letting the SVG stretch and distort text).
+    const hostWidth = Math.round(host.clientWidth);
+    if (hostWidth <= 0) return; // collapsed/hidden; the ResizeObserver re-renders on expand
+    const width = hostWidth;
+    const height = Math.max(80, Math.round(host.clientHeight) || CHART_HEIGHT);
     const geometry = buildChartGeometry(this._profilePoints, width, height);
     const system = this._state.unitSystem;
 
@@ -671,8 +726,9 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     svg.setAttribute('class', 'elevation-profile-svg');
     svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
     svg.setAttribute('width', '100%');
-    svg.setAttribute('height', `${height}`);
+    svg.setAttribute('height', '100%');
     svg.setAttribute('preserveAspectRatio', 'none');
+    this._svgEl = svg;
 
     const area = document.createElementNS(SVG_NS, 'path');
     area.setAttribute('class', 'elevation-profile-area');
@@ -758,6 +814,106 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     this._setHoverPoint(null);
   }
 
+  // --- Export ------------------------------------------------------------
+
+  private _exportCsv(): void {
+    if (this._profilePoints.length < 2) return;
+    const csv = profileToCsv(this._profilePoints, this._sampledCoords);
+    this._downloadBlob(
+      new Blob([csv], { type: 'text/csv;charset=utf-8' }),
+      'elevation-profile.csv',
+    );
+  }
+
+  private _exportPng(): void {
+    const svg = this._svgEl;
+    if (!svg || this._profilePoints.length < 2) return;
+    const viewBox = svg.getAttribute('viewBox')?.split(' ').map(Number);
+    if (!viewBox || viewBox.length < 4) return;
+    const width = viewBox[2];
+    const height = viewBox[3];
+
+    // External CSS does not apply once the SVG is rasterized, so clone it and
+    // inline the presentation styles plus a solid background.
+    const clone = svg.cloneNode(true) as SVGSVGElement;
+    clone.setAttribute('xmlns', SVG_NS);
+    clone.setAttribute('width', `${width}`);
+    clone.setAttribute('height', `${height}`);
+    clone.querySelector('.elevation-profile-hover')?.remove();
+
+    const inline = (selector: string, props: string[]): void => {
+      const live = svg.querySelectorAll(selector);
+      const cloned = clone.querySelectorAll(selector);
+      live.forEach((el, i) => {
+        const target = cloned[i] as SVGElement | undefined;
+        if (!target) return;
+        const cs = getComputedStyle(el);
+        for (const prop of props) {
+          target.style.setProperty(prop, cs.getPropertyValue(prop));
+        }
+      });
+    };
+    inline('.elevation-profile-area', ['fill', 'stroke']);
+    inline('.elevation-profile-line', ['fill', 'stroke', 'stroke-width']);
+    inline('.elevation-profile-axis', ['fill', 'font-size', 'font-family']);
+
+    const background = getComputedStyle(svg).backgroundColor;
+    const rect = document.createElementNS(SVG_NS, 'rect');
+    rect.setAttribute('width', `${width}`);
+    rect.setAttribute('height', `${height}`);
+    rect.setAttribute(
+      'fill',
+      background && background !== 'rgba(0, 0, 0, 0)' ? background : '#ffffff',
+    );
+    clone.insertBefore(rect, clone.firstChild);
+
+    const svgText = new XMLSerializer().serializeToString(clone);
+    const url = URL.createObjectURL(
+      new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' }),
+    );
+    const image = new Image();
+    image.onload = (): void => {
+      const scale = 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(width * scale);
+      canvas.height = Math.round(height * scale);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      ctx.scale(scale, scale);
+      ctx.drawImage(image, 0, 0, width, height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => {
+        if (blob) this._downloadBlob(blob, 'elevation-profile.png');
+      }, 'image/png');
+    };
+    image.onerror = (): void => {
+      URL.revokeObjectURL(url);
+      this._setStatus('Could not export the chart as PNG.');
+    };
+    image.src = url;
+  }
+
+  private _downloadBlob(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  private _syncExport(): void {
+    if (this._exportEl) {
+      this._exportEl.style.display =
+        this._stats && this._profilePoints.length >= 2 ? 'flex' : 'none';
+    }
+  }
+
   // --- UI sync helpers ---------------------------------------------------
 
   private _cycleUnits(): void {
@@ -830,6 +986,12 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
     return 'top-right';
   }
 
+  /**
+   * Position the panel by its top-left corner in every dock. Anchoring this way
+   * (rather than right/bottom) keeps the bottom-right CSS resize handle behaving
+   * the same in all four corners: the panel grows down and to the right from a
+   * fixed origin, so a user-set width/height is never fought by repositioning.
+   */
   private _updatePanelPosition(): void {
     if (!this._container || !this._panel || !this._mapContainer) return;
     const button = this._container.querySelector('.elevation-profile-toggle');
@@ -837,36 +999,31 @@ export class ElevationProfileControl implements IControl, DeepLinkConsumer {
 
     const buttonRect = button.getBoundingClientRect();
     const mapRect = this._mapContainer.getBoundingClientRect();
+    const panelRect = this._panel.getBoundingClientRect();
     const position = this._getControlPosition();
     const gap = 5;
 
-    const top = buttonRect.top - mapRect.top;
-    const bottom = mapRect.bottom - buttonRect.bottom;
-    const left = buttonRect.left - mapRect.left;
-    const right = mapRect.right - buttonRect.right;
+    const buttonTop = buttonRect.top - mapRect.top;
+    const buttonBottom = buttonRect.bottom - mapRect.top;
+    const buttonLeft = buttonRect.left - mapRect.left;
+    const buttonRight = buttonRect.right - mapRect.left;
 
-    this._panel.style.top = '';
-    this._panel.style.bottom = '';
-    this._panel.style.left = '';
+    // Left edge: left docks open from the button's left; right docks open
+    // leftward so the panel's right edge aligns with the button's right edge.
+    const isLeft = position === 'top-left' || position === 'bottom-left';
+    let left = isLeft ? buttonLeft : buttonRight - panelRect.width;
+
+    // Top edge: top docks open below the button; bottom docks open above it.
+    const isTop = position === 'top-left' || position === 'top-right';
+    let top = isTop ? buttonBottom + gap : buttonTop - panelRect.height - gap;
+
+    // Keep the panel from spilling off the top-left of the map.
+    left = Math.max(0, left);
+    top = Math.max(0, top);
+
     this._panel.style.right = '';
-
-    switch (position) {
-      case 'top-left':
-        this._panel.style.top = `${top + buttonRect.height + gap}px`;
-        this._panel.style.left = `${left}px`;
-        break;
-      case 'top-right':
-        this._panel.style.top = `${top + buttonRect.height + gap}px`;
-        this._panel.style.right = `${right}px`;
-        break;
-      case 'bottom-left':
-        this._panel.style.bottom = `${bottom + buttonRect.height + gap}px`;
-        this._panel.style.left = `${left}px`;
-        break;
-      case 'bottom-right':
-        this._panel.style.bottom = `${bottom + buttonRect.height + gap}px`;
-        this._panel.style.right = `${right}px`;
-        break;
-    }
+    this._panel.style.bottom = '';
+    this._panel.style.left = `${left}px`;
+    this._panel.style.top = `${top}px`;
   }
 }
